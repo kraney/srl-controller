@@ -63,9 +63,9 @@ func TestCreateConfigMaps(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(entrypointCM.Data).To(HaveKey("kne-entrypoint.sh"))
 	entrypointScript := entrypointCM.Data["kne-entrypoint.sh"]
-	g.Expect(entrypointScript).To(ContainSubstring("saved-mgmt-ip"))
-	g.Expect(entrypointScript).To(ContainSubstring("saved-mgmt-routes"))
-	g.Expect(entrypointScript).To(ContainSubstring("name eth0"))
+	g.Expect(entrypointScript).To(ContainSubstring("saved-ip-"))
+	g.Expect(entrypointScript).To(ContainSubstring("saved-route-"))
+	g.Expect(entrypointScript).To(ContainSubstring("dev mgmt0"))
 	g.Expect(entrypointScript).To(ContainSubstring("config.json"))
 
 	// 4. Verify variants ConfigMap

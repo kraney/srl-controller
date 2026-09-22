@@ -16,43 +16,28 @@ data:
     sudo bash /tmp/topomac/topomac.sh
     echo "topomac.sh script finished"
 
-    # Manage management network interface across container restarts.
-    # On initial boot, eth0 exists with the CNI-assigned IP and routing table.
-    # Cache them to persistent storage (/etc/opt/srlinux).
-    if { [ ! -s /etc/opt/srlinux/saved-mgmt-ip ] || [ ! -s /etc/opt/srlinux/saved-mgmt-routes ]; } && ip link show eth0 >/dev/null 2>&1; then
-        echo "Caching management interface IP and routes from eth0..."
-        mgmt_ip=$(ip -4 -o addr show dev eth0 | awk '!/^[0-9]*: ?lo|link\/ether|link/ {print $4}' | head -n1)
-        if [ -n "$mgmt_ip" ]; then
-            echo "$mgmt_ip" | sudo tee /etc/opt/srlinux/saved-mgmt-ip >/dev/null
-        fi
-        sudo ip -4 route save dev eth0 | sudo tee /etc/opt/srlinux/saved-mgmt-routes >/dev/null
-    # On reboot, SR Linux previously renamed eth0 to mgmt0 and stripped its IP.
-    # Restore mgmt0 back to eth0 with its IP and routes so SR Linux initialization runs cleanly.
-    elif ip link show mgmt0 >/dev/null 2>&1 && ! ip link show eth0 >/dev/null 2>&1; then
-        echo "Restoring eth0 and management IP for container reboot..."
-        sudo ip link set mgmt0 down
-        sudo ip link set mgmt0 name eth0
-        sudo ip link set eth0 up
-        if [ -s /etc/opt/srlinux/saved-mgmt-ip ]; then
-            saved_ip=$(cat /etc/opt/srlinux/saved-mgmt-ip)
-            echo "Restoring IP $saved_ip to eth0"
-            sudo ip -4 addr add "$saved_ip" dev eth0 2>/dev/null || true
-        fi
-        if [ -s /etc/opt/srlinux/saved-mgmt-routes ]; then
-            echo "Restoring routes to eth0"
-            sudo ip -4 route restore < /etc/opt/srlinux/saved-mgmt-routes 2>/dev/null || true
-        fi
+    IP=$(which ip)
+    ip_versions=("4" "6")
+
+    if ${IP} link show eth0 > /dev/null 2>&1; then
+        for version in "${ip_versions[@]}"; do
+            sudo ${IP} -"${version}" route save dev eth0 > /etc/opt/srlinux/saved-route-"${version}"
+            sudo ${IP} -"${version}" address save dev eth0 > /etc/opt/srlinux/saved-ip-"${version}"
+        done
+    elif ${IP} link show mgmt0 > /dev/null 2>&1; then
+        sudo ${IP} link set mgmt0 up
+        for version in "${ip_versions[@]}"; do
+            sudo ${IP} -"${version}" address flush dev mgmt0
+            sudo ${IP} -"${version}" route flush dev mgmt0
+            sudo ${IP} -"${version}" addr restore dev mgmt0 < /etc/opt/srlinux/saved-ip-"${version}" 2>/dev/null
+            sudo ${IP} -"${version}" route restore < /etc/opt/srlinux/saved-route-"${version}" 2>/dev/null
+        done
     fi
 
     # Only copy startup configuration on initial boot.
-    # On reboot, SR Linux boots directly from the persisted /etc/opt/srlinux/config.json.
-    if [ ! -f /etc/opt/srlinux/config.json ] && [ ! -f /etc/opt/srlinux/config.cli ]; then
-        if [ -d /tmp/startup-config ] && [ "$(ls -A /tmp/startup-config 2>/dev/null)" ]; then
-            echo "Seeding startup configuration into persistent volume..."
-            sudo cp -L /tmp/startup-config/* /etc/opt/srlinux/
-        fi
-    else
-        echo "Persistent configuration already exists in /etc/opt/srlinux, skipping seed."
+    if [[ ! -f /etc/opt/srlinux/config.json && ! -f /etc/opt/srlinux/config.cli ]]; then
+        sudo cp -L /tmp/startup-config/* /etc/opt/srlinux/ 2>/dev/null || true
     fi
 
     exec /entrypoint.sh "$@"
+
